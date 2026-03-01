@@ -1,18 +1,16 @@
 from __future__ import annotations
 
+import base64
 import os
+import re
 from dataclasses import dataclass
+from email.message import EmailMessage
 from typing import Optional
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-
-from email.message import EmailMessage
-import base64
-import re
-
 
 SCOPES_READ = ["https://www.googleapis.com/auth/gmail.readonly"]
 SCOPES_COMPOSE = ["https://www.googleapis.com/auth/gmail.compose"]
@@ -27,11 +25,26 @@ def _scopes(include_compose: bool, include_modify: bool) -> list[str]:
         scopes.extend(SCOPES_MODIFY)
     out = []
     seen = set()
-    for s in scopes:
-        if s not in seen:
-            seen.add(s)
-            out.append(s)
+    for scope in scopes:
+        if scope not in seen:
+            seen.add(scope)
+            out.append(scope)
     return out
+
+
+def _write_token_securely(path: str, content: str) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+    finally:
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            # On some platforms (or restricted filesystems) chmod can fail.
+            pass
 
 
 @dataclass(frozen=True)
@@ -84,17 +97,18 @@ class GmailClient:
                     include_granted_scopes="true",
                 )
 
-            with open(self.token_path, "w", encoding="utf-8") as f:
-                f.write(creds.to_json())
+            _write_token_securely(self.token_path, creds.to_json())
 
         granted = set((creds.scopes or []))
         if self.include_compose_scope and not set(SCOPES_COMPOSE).issubset(granted):
             raise PermissionError(
-                "Token does not include gmail.compose. Delete the token file for this profile and re-run gm_list."
+                "Token does not include gmail.compose. Re-run gm_list with --auth-upgrade-scopes "
+                "(or delete this profile token and authenticate again)."
             )
         if self.include_modify_scope and not set(SCOPES_MODIFY).issubset(granted):
             raise PermissionError(
-                "Token does not include gmail.modify. Delete the token file for this profile and re-run gm_list."
+                "Token does not include gmail.modify. Re-run gm_list with --auth-upgrade-scopes "
+                "(or delete this profile token and authenticate again)."
             )
 
         return build("gmail", "v1", credentials=creds, cache_discovery=False)
@@ -109,26 +123,28 @@ class GmailClient:
 
         out: list[ListedMessage] = []
         for mid in ids:
-            m = self.svc.users().messages().get(
+            message = self.svc.users().messages().get(
                 userId="me",
                 id=mid,
                 format="metadata",
                 metadataHeaders=["From", "Subject", "Date", "Message-ID"],
             ).execute()
 
-            payload = m.get("payload", {}) or {}
+            payload = message.get("payload", {}) or {}
             headers = payload.get("headers", []) or []
             from_hdr = _header(headers, "From") or ""
             subject = _header(headers, "Subject") or ""
 
-            out.append(ListedMessage(
-                message_id=m.get("id") or mid,
-                thread_id=m.get("threadId") or mid,
-                internal_ts_ms=int(m.get("internalDate") or 0),
-                from_address=from_hdr,
-                subject=subject,
-                label_ids=list(m.get("labelIds", []) or []),
-            ))
+            out.append(
+                ListedMessage(
+                    message_id=message.get("id") or mid,
+                    thread_id=message.get("threadId") or mid,
+                    internal_ts_ms=int(message.get("internalDate") or 0),
+                    from_address=from_hdr,
+                    subject=subject,
+                    label_ids=list(message.get("labelIds", []) or []),
+                )
+            )
 
         out.sort(key=lambda x: x.internal_ts_ms, reverse=True)
         return out
@@ -156,11 +172,12 @@ class GmailClient:
         to_email = _extract_email(from_hdr)
 
         em = EmailMessage()
-        em["To"] = to_email or from_hdr
-        em["Subject"] = _reply_subject(subject)
+        em["To"] = _sanitize_header_value(to_email or from_hdr)
+        em["Subject"] = _sanitize_header_value(_reply_subject(subject))
         if msgid:
-            em["In-Reply-To"] = msgid
-            em["References"] = msgid
+            safe_msgid = _sanitize_header_value(msgid)
+            em["In-Reply-To"] = safe_msgid
+            em["References"] = safe_msgid
         em.set_content((draft_text or "").rstrip() + "\n")
 
         raw = base64.urlsafe_b64encode(em.as_bytes()).decode("utf-8")
@@ -172,11 +189,16 @@ class GmailClient:
 
 
 def _header(headers: list[dict], name: str) -> str | None:
-    n = name.lower()
-    for h in headers or []:
-        if (h.get("name") or "").lower() == n:
-            return h.get("value")
+    needle = name.lower()
+    for item in headers or []:
+        if (item.get("name") or "").lower() == needle:
+            return item.get("value")
     return None
+
+
+def _sanitize_header_value(value: str) -> str:
+    # Prevent header-injection vectors via CR/LF from untrusted upstream values.
+    return (value or "").replace("\r", " ").replace("\n", " ").strip()
 
 
 _EMAIL_RE = re.compile(r"<([^>]+)>")
@@ -185,18 +207,18 @@ _EMAIL_RE = re.compile(r"<([^>]+)>")
 def _extract_email(from_hdr: str) -> str:
     if not from_hdr:
         return ""
-    m = _EMAIL_RE.search(from_hdr)
-    if m:
-        return (m.group(1) or "").strip()
+    match = _EMAIL_RE.search(from_hdr)
+    if match:
+        return (match.group(1) or "").strip()
     if "@" in from_hdr and " " not in from_hdr:
         return from_hdr.strip()
     return ""
 
 
 def _reply_subject(subject: str) -> str:
-    s = (subject or "").strip()
-    if not s:
+    value = (subject or "").strip()
+    if not value:
         return "Re:"
-    if s.lower().startswith("re:"):
-        return s
-    return "Re: " + s
+    if value.lower().startswith("re:"):
+        return value
+    return "Re: " + value
