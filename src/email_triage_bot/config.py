@@ -34,17 +34,17 @@ class Settings(BaseSettings):
     # --- Draft options ---
     draft_signature: str = Field(default="", alias="DRAFT_SIGNATURE")
 
-# --- Safety / filtering ---
-# If true, drafts are created only when the latest email contains one of the keywords below.
-require_name_mention: bool = Field(default=True, alias="REQUIRE_NAME_MENTION")
-name_keywords: str = Field(default="Andreia,Andrea", alias="NAME_KEYWORDS")
-@field_validator("gemini_timeout_s")
-@classmethod
-def _min_timeout(cls, v: int) -> int:
-    # Gemini enforces minimum deadline/timeout of 10s; clamp to be safe.
-    try:
-        v = int(v)
-    except Exception:
-        v = 60
-    return max(10, v)
+    # --- Safety / filtering ---
+    # If true, drafts are created only when the latest email contains one of the keywords below.
+    require_name_mention: bool = Field(default=True, alias="REQUIRE_NAME_MENTION")
+    name_keywords: str = Field(default="Andreia,Andrea", alias="NAME_KEYWORDS")
 
+    @field_validator("gemini_timeout_s")
+    @classmethod
+    def _min_timeout(cls, v: int) -> int:
+        # Gemini enforces minimum deadline/timeout of 10s; clamp to be safe.
+        try:
+            v = int(v)
+        except Exception:
+            v = 60
+        return max(10, v)
