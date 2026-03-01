@@ -9,3 +9,6 @@ README.md
 profiles.json
 .env.example
 .env
+# Python cache artifacts
+__pycache__/
+*.py[cod]
