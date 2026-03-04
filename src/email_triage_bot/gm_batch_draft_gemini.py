@@ -25,6 +25,12 @@ def _contains_any_keyword(text: str, keywords_csv: str) -> bool:
     return False
 
 
+def _is_noreply_sender(from_header: str) -> bool:
+    normalized = (from_header or "").lower()
+    compact = re.sub(r"[^a-z0-9]", "", normalized)
+    return "noreply" in compact
+
+
 def _dedupe_threads(listed):
     by_thread = {}
     for m in listed:
@@ -123,6 +129,11 @@ def main() -> None:
             text_plain, text_html = extract_bodies(payload)
             body_text = text_plain or (html_to_text(text_html) if text_html else "")
             body_text = strip_quoted_replies(body_text).strip()
+
+            if _is_noreply_sender(from_hdr):
+                skipped += 1
+                print(f"SKIP (noreply sender): {target_id} | {subject[:80]}")
+                continue
 
             ignore_hay = f"{from_hdr}\n{subject}\n{body_text}"
             if _contains_any_keyword(ignore_hay, s.ignore_keywords):
