@@ -22,16 +22,21 @@ def _contains_any_keyword(text: str, keywords_csv: str) -> bool:
     return any(k in haystack for k in kws)
 
 
+def _contains_name_keyword(text: str, keywords_csv: str) -> bool:
+    haystack = (text or "")
+    kws = [k.strip() for k in (keywords_csv or "").split(",") if k.strip()]
+    if not kws:
+        return True
+    for k in kws:
+        if re.search(rf"\b{re.escape(k)}\b", haystack, flags=re.IGNORECASE):
+            return True
+    return False
+
+
 def _is_ignored_sender(from_header: str) -> bool:
     normalized = (from_header or "").lower()
     compact = re.sub(r"[^a-z0-9]", "", normalized)
-    return ("noreply" in compact) or ("announcements@" in normalized)
-
-
-def _is_noreply_sender(from_header: str) -> bool:
-    normalized = (from_header or "").lower()
-    compact = re.sub(r"[^a-z0-9]", "", normalized)
-    return "noreply" in compact
+    return ("noreply" in compact) or ("noreplay" in compact) or ("announcements@" in normalized)
 
 
 def _dedupe_threads(listed):
