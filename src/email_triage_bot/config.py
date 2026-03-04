@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     name_keywords: str = Field(default="Andreia,Andrea", alias="NAME_KEYWORDS")
     # Always skip drafting for emails that contain one of these keywords
     # in sender, subject, or body.
-    ignore_keywords: str = Field(default="social media,bank,newsletter,newsletters,noreply,no-reply", alias="IGNORE_KEYWORDS")
+    ignore_keywords: str = Field(default="social media,bank,newsletter,newsletters,ebay,linkedin,instagram,facebook,tiktok,youtube", alias="IGNORE_KEYWORDS")
 
     @field_validator("gemini_timeout_s")
     @classmethod

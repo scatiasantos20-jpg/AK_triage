@@ -15,14 +15,17 @@ from email_triage_bot.profiles import get_profile
 
 
 def _contains_any_keyword(text: str, keywords_csv: str) -> bool:
-    text = (text or "")
-    kws = [k.strip() for k in (keywords_csv or "").split(",") if k.strip()]
+    haystack = (text or "").lower()
+    kws = [k.strip().lower() for k in (keywords_csv or "").split(",") if k.strip()]
     if not kws:
         return False
-    for k in kws:
-        if re.search(rf"\b{re.escape(k)}\b", text, flags=re.IGNORECASE):
-            return True
-    return False
+    return any(k in haystack for k in kws)
+
+
+def _is_ignored_sender(from_header: str) -> bool:
+    normalized = (from_header or "").lower()
+    compact = re.sub(r"[^a-z0-9]", "", normalized)
+    return ("noreply" in compact) or ("announcements@" in normalized)
 
 
 def _is_noreply_sender(from_header: str) -> bool:
@@ -130,9 +133,9 @@ def main() -> None:
             body_text = text_plain or (html_to_text(text_html) if text_html else "")
             body_text = strip_quoted_replies(body_text).strip()
 
-            if _is_noreply_sender(from_hdr):
+            if _is_ignored_sender(from_hdr):
                 skipped += 1
-                print(f"SKIP (noreply sender): {target_id} | {subject[:80]}")
+                print(f"SKIP (ignored sender): {target_id} | {subject[:80]}")
                 continue
 
             ignore_hay = f"{from_hdr}\n{subject}\n{body_text}"
