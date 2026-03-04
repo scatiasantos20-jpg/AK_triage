@@ -28,6 +28,12 @@ def _is_ignored_sender(from_header: str) -> bool:
     return ("noreply" in compact) or ("announcements@" in normalized)
 
 
+def _is_noreply_sender(from_header: str) -> bool:
+    normalized = (from_header or "").lower()
+    compact = re.sub(r"[^a-z0-9]", "", normalized)
+    return "noreply" in compact
+
+
 def _dedupe_threads(listed):
     by_thread = {}
     for m in listed:
