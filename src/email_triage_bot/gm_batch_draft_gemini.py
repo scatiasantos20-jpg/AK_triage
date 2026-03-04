@@ -14,11 +14,11 @@ from email_triage_bot.clients.gemini.client import GeminiClient, GeminiConfig, G
 from email_triage_bot.profiles import get_profile
 
 
-def _contains_name_keyword(text: str, keywords_csv: str) -> bool:
+def _contains_any_keyword(text: str, keywords_csv: str) -> bool:
     text = (text or "")
     kws = [k.strip() for k in (keywords_csv or "").split(",") if k.strip()]
     if not kws:
-        return True
+        return False
     for k in kws:
         if re.search(rf"\b{re.escape(k)}\b", text, flags=re.IGNORECASE):
             return True
@@ -124,9 +124,15 @@ def main() -> None:
             body_text = text_plain or (html_to_text(text_html) if text_html else "")
             body_text = strip_quoted_replies(body_text).strip()
 
+            ignore_hay = f"{from_hdr}\n{subject}\n{body_text}"
+            if _contains_any_keyword(ignore_hay, s.ignore_keywords):
+                skipped += 1
+                print(f"SKIP (ignore keyword): {target_id} | {subject[:80]}")
+                continue
+
             if s.require_name_mention:
                 hay = f"{subject}\n{body_text}"
-                if not _contains_name_keyword(hay, s.name_keywords):
+                if not _contains_any_keyword(hay, s.name_keywords):
                     skipped += 1
                     print(f"SKIP (no name mention): {target_id} | {subject[:80]}")
                     continue
