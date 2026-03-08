@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
-
-from openpyxl import Workbook
 
 from email_triage_bot.clients.gmail.client import GmailClient
 from email_triage_bot.clients.gmail.parser import extract_bodies, get_header
@@ -19,6 +18,44 @@ def _to_iso_utc(ts_ms: int) -> str:
         return ""
     dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
     return dt.isoformat()
+
+
+def _rows_from_messages(gmail: GmailClient, listed: list, include_quoted: bool) -> list[list[str]]:
+    rows: list[list[str]] = []
+    for item in listed:
+        msg = gmail.get_message_full(item.message_id)
+        payload = msg.get("payload", {}) or {}
+        headers = payload.get("headers", []) or []
+
+        subject = get_header(headers, "Subject") or item.subject or ""
+        from_hdr = get_header(headers, "From") or item.from_address or ""
+        text_plain, text_html = extract_bodies(payload)
+        body = text_plain or (html_to_text(text_html) if text_html else "")
+        if not include_quoted:
+            body = strip_quoted_replies(body)
+        body = (body or "").strip()
+
+        rows.append([
+            item.message_id,
+            item.thread_id,
+            _to_iso_utc(item.internal_ts_ms),
+            from_hdr,
+            subject,
+            body,
+            f"https://mail.google.com/mail/u/0/#inbox/{item.message_id}",
+        ])
+    return rows
+
+
+def _save_as_csv(path: Path, rows: list[list[str]]) -> Path:
+    if path.suffix.lower() == ".xlsx":
+        path = path.with_suffix(".csv")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["message_id", "thread_id", "date_utc", "from", "subject", "body", "gmail_link"])
+        w.writerows(rows)
+    return path
 
 
 def main() -> None:
@@ -50,37 +87,24 @@ def main() -> None:
 
     listed = gmail.list_messages(query=query, limit=limit)
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "emails"
-    ws.append(["message_id", "thread_id", "date_utc", "from", "subject", "body", "gmail_link"])
-
-    for item in listed:
-        msg = gmail.get_message_full(item.message_id)
-        payload = msg.get("payload", {}) or {}
-        headers = payload.get("headers", []) or []
-
-        subject = get_header(headers, "Subject") or item.subject or ""
-        from_hdr = get_header(headers, "From") or item.from_address or ""
-        text_plain, text_html = extract_bodies(payload)
-        body = text_plain or (html_to_text(text_html) if text_html else "")
-        if not args.include_quoted:
-            body = strip_quoted_replies(body)
-        body = (body or "").strip()
-
-        ws.append([
-            item.message_id,
-            item.thread_id,
-            _to_iso_utc(item.internal_ts_ms),
-            from_hdr,
-            subject,
-            body,
-            f"https://mail.google.com/mail/u/0/#inbox/{item.message_id}",
-        ])
+    rows = _rows_from_messages(gmail, listed, include_quoted=args.include_quoted)
 
     out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(out)
+    try:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "emails"
+        ws.append(["message_id", "thread_id", "date_utc", "from", "subject", "body", "gmail_link"])
+        for row in rows:
+            ws.append(row)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(out)
+    except ModuleNotFoundError:
+        out = _save_as_csv(out, rows)
+        print("WARNING: openpyxl is not installed. Exported CSV instead of XLSX.")
+        print("Tip: install openpyxl with 'pip install openpyxl' to export .xlsx files.")
 
     print(f"account: {profile_name} | exported: {len(listed)} | query: {query} | output: {out}")
 
