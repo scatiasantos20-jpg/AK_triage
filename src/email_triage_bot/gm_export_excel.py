@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,21 @@ def _to_iso_utc(ts_ms: int) -> str:
         return ""
     dt = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
     return dt.isoformat()
+
+
+def _resolve_credentials_path(path_value: str) -> str:
+    path = Path(path_value)
+    if path.exists():
+        return str(path)
+
+    # Friendly fallback: many Gmail OAuth downloads are named client_secret*.json
+    candidates = sorted(Path.cwd().glob("client_secret*.json"))
+    if len(candidates) == 1:
+        picked = candidates[0]
+        print(f"INFO: credentials.json not found. Using detected credentials file: {picked}")
+        return str(picked)
+
+    return str(path)
 
 
 def _rows_from_messages(gmail: GmailClient, listed: list, include_quoted: bool) -> list[list[str]]:
@@ -67,6 +83,8 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="Override BATCH_LIMIT")
     ap.add_argument("--query", type=str, default=None, help="Override GMAIL_QUERY")
     ap.add_argument("--output", type=str, default="triage_export.xlsx", help="Output .xlsx path")
+    ap.add_argument("--credentials-path", type=str, default=None, help="Override Gmail credentials JSON path")
+    ap.add_argument("--token-path", type=str, default=None, help="Override Gmail token JSON path")
     ap.add_argument("--include-quoted", action="store_true", help="Keep quoted replies in body")
     args = ap.parse_args()
 
@@ -76,8 +94,9 @@ def main() -> None:
     profile_name = args.profile.strip() or settings.default_profile
     profile = get_profile(settings.profiles_path, profile_name)
 
-    credentials_path = profile.credentials_path if profile else settings.gmail_credentials_path
-    token_path = profile.token_path if profile else settings.gmail_token_path
+    credentials_path = args.credentials_path or (profile.credentials_path if profile else settings.gmail_credentials_path)
+    token_path = args.token_path or (profile.token_path if profile else settings.gmail_token_path)
+    credentials_path = _resolve_credentials_path(credentials_path)
     query = args.query.strip() if args.query else (profile.gmail_query if profile and profile.gmail_query else settings.gmail_query)
     limit = int(args.limit if args.limit is not None else (profile.batch_limit if profile and profile.batch_limit else settings.batch_limit))
 
@@ -89,10 +108,16 @@ def main() -> None:
             include_modify_scope=False,
         )
     except FileNotFoundError as ex:
+        token_exists = os.path.exists(token_path)
         raise SystemExit(
-            "Missing Gmail credentials for export. "
-            f"Expected file: {credentials_path}. "
-            "Set GMAIL_CREDENTIALS_PATH / PROFILES_PATH correctly or place credentials.json in the project root."
+            "Missing Gmail credentials for export.\n"
+            f"- Expected credentials file: {credentials_path}\n"
+            f"- Token file exists: {token_exists} ({token_path})\n\n"
+            "How to fix:\n"
+            "1) Download OAuth credentials JSON from Google Cloud (Desktop app).\n"
+            "2) Save it as credentials.json in the project root OR pass --credentials-path.\n"
+            "3) Optionally set --token-path (or GMAIL_TOKEN_PATH) for your token file.\n"
+            "4) Run again: python -m email_triage_bot.gm_export_excel --credentials-path <file>.json"
         ) from ex
     except PermissionError as ex:
         raise SystemExit(
@@ -124,7 +149,7 @@ def main() -> None:
         print("WARNING: openpyxl is not installed. Exported CSV instead of XLSX.")
         print("Tip: install openpyxl with 'pip install openpyxl' to export .xlsx files.")
 
-    print(f"account: {profile_name} | exported: {len(listed)} | query: {query} | output: {out}")
+    print(f"account: {profile_name} | exported: {len(rows)} | query: {query} | output: {out}")
 
 
 if __name__ == "__main__":
