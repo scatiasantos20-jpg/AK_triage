@@ -121,9 +121,28 @@ class GmailClient:
     def svc(self):
         return self._svc
 
-    def list_messages(self, query: str, limit: int) -> list[ListedMessage]:
-        res = self.svc.users().messages().list(userId="me", q=query, maxResults=limit).execute()
-        ids = [m["id"] for m in (res.get("messages") or [])]
+    def list_messages(self, query: str, limit: int | None) -> list[ListedMessage]:
+        ids: list[str] = []
+        page_token: str | None = None
+
+        while True:
+            remaining = None if limit is None else max(0, limit - len(ids))
+            if remaining == 0:
+                break
+
+            max_results = 500 if remaining is None else max(1, min(500, remaining))
+            req = self.svc.users().messages().list(
+                userId="me",
+                q=query,
+                maxResults=max_results,
+                pageToken=page_token,
+            )
+            res = req.execute()
+            ids.extend([m["id"] for m in (res.get("messages") or [])])
+
+            page_token = res.get("nextPageToken")
+            if not page_token:
+                break
 
         out: list[ListedMessage] = []
         for mid in ids:

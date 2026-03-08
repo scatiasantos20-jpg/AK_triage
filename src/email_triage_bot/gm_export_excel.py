@@ -113,11 +113,39 @@ def _save_as_csv(path: Path, rows: list[list[str]]) -> Path:
     return path
 
 
+def _export_to_file(rows: list[list[str]], out: Path) -> Path:
+    try:
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "emails"
+        ws.append(["message_id", "thread_id", "date_utc", "from", "subject", "body", "gmail_link"])
+        for row in rows:
+            ws.append(row)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        wb.save(out)
+        return out
+    except ModuleNotFoundError:
+        out = _save_as_csv(out, rows)
+        print("WARNING: openpyxl is not installed. Exported CSV instead of XLSX.")
+        print("Tip: install openpyxl with 'python -m pip install openpyxl' to export .xlsx files.")
+        return out
+
+
+def _derive_output(base_output: Path, suffix: str) -> Path:
+    if suffix == "":
+        return base_output
+    return base_output.with_name(f"{base_output.stem}_{suffix}{base_output.suffix}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Export sender/subject/body to an Excel file for triage analysis.")
     ap.add_argument("--profile", type=str, default="", help="Profile name from profiles.json")
-    ap.add_argument("--limit", type=int, default=None, help="Override BATCH_LIMIT")
-    ap.add_argument("--query", type=str, default=None, help="Override GMAIL_QUERY")
+    ap.add_argument("--limit", type=int, default=50, help="Max emails to export (ignored when --all is used)")
+    ap.add_argument("--all", action="store_true", help="Export all matching emails (can be large)")
+    ap.add_argument("--query", type=str, default=None, help="Override Gmail query")
+    ap.add_argument("--mailbox", choices=["inbox", "sent", "both"], default="inbox", help="Mailbox preset when --query is not provided")
     ap.add_argument("--output", type=str, default="triage_export.xlsx", help="Output .xlsx path")
     ap.add_argument("--credentials-path", type=str, default=None, help="Override Gmail credentials JSON path")
     ap.add_argument("--token-path", type=str, default=None, help="Override Gmail token JSON path")
@@ -134,8 +162,13 @@ def main() -> None:
     token_path = args.token_path or (profile.token_path if profile else settings.gmail_token_path)
     credentials_path = _resolve_credentials_path(credentials_path)
     token_path = _resolve_token_path(token_path)
-    query = args.query.strip() if args.query else (profile.gmail_query if profile and profile.gmail_query else settings.gmail_query)
-    limit = int(args.limit if args.limit is not None else (profile.batch_limit if profile and profile.batch_limit else settings.batch_limit))
+
+    if args.all:
+        limit: int | None = None
+    else:
+        limit = int(args.limit if args.limit is not None else 50)
+
+    base_output = Path(args.output)
 
     try:
         gmail = GmailClient(
@@ -165,31 +198,27 @@ def main() -> None:
             "Re-authenticate the profile (for example with gm_list) and try again."
         ) from ex
 
-    try:
-        listed = gmail.list_messages(query=query, limit=limit)
-    except Exception as ex:
-        raise SystemExit(f"Failed to list Gmail messages for export: {type(ex).__name__}: {ex}") from ex
+    jobs: list[tuple[str, str, str]] = []  # (label, query, suffix)
+    if args.query:
+        jobs = [("custom", args.query.strip(), "")]
+    elif args.mailbox == "both":
+        jobs = [("inbox", "in:inbox", "inbox"), ("sent", "in:sent", "sent")]
+    elif args.mailbox == "sent":
+        jobs = [("sent", "in:sent", "sent")]
+    else:
+        jobs = [("inbox", "in:inbox", "inbox")]
 
-    rows = _rows_from_messages(gmail, listed, include_quoted=args.include_quoted)
+    for label, query, suffix in jobs:
+        try:
+            listed = gmail.list_messages(query=query, limit=limit)
+        except Exception as ex:
+            raise SystemExit(f"Failed to list Gmail messages for export ({label}): {type(ex).__name__}: {ex}") from ex
 
-    out = Path(args.output)
-    try:
-        from openpyxl import Workbook
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "emails"
-        ws.append(["message_id", "thread_id", "date_utc", "from", "subject", "body", "gmail_link"])
-        for row in rows:
-            ws.append(row)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        wb.save(out)
-    except ModuleNotFoundError:
-        out = _save_as_csv(out, rows)
-        print("WARNING: openpyxl is not installed. Exported CSV instead of XLSX.")
-        print("Tip: install openpyxl with 'pip install openpyxl' to export .xlsx files.")
-
-    print(f"account: {profile_name} | exported: {len(rows)} | query: {query} | output: {out}")
+        rows = _rows_from_messages(gmail, listed, include_quoted=args.include_quoted)
+        output_path = _derive_output(base_output, suffix if len(jobs) > 1 else "")
+        written = _export_to_file(rows, output_path)
+        limit_text = "all" if limit is None else str(limit)
+        print(f"account: {profile_name} | mailbox: {label} | exported: {len(rows)} | limit: {limit_text} | query: {query} | output: {written}")
 
 
 if __name__ == "__main__":
