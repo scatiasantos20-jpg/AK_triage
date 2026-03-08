@@ -273,7 +273,7 @@ def main() -> None:
 
             if s.require_name_mention:
                 hay = f"{subject}\n{body_text}"
-                if not _contains_name_keyword(hay, s.name_keywords):
+                if not _contains_any_keyword(hay, s.name_keywords):
                     skipped += 1
                     print(f"SKIP (no name mention): {target_id} | {subject[:80]}")
                     continue
