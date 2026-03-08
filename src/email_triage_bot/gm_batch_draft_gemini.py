@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
+from pathlib import Path
 
 from email_triage_bot.config import Settings
 from email_triage_bot.logging_conf import setup_logging
@@ -14,15 +16,158 @@ from email_triage_bot.clients.gemini.client import GeminiClient, GeminiConfig, G
 from email_triage_bot.profiles import get_profile
 
 
+DEFAULT_FILTER_RULES: dict = {
+    "no_reply_senders": [
+        "noreply@discord.com",
+        "no-reply@email.slackhq.com",
+        "no-reply@squarespace.com",
+        "notebooklm-noreply@google.com",
+        "drive-shares-dm-noreply@google.com",
+        "employers@g.joinhandshake.com",
+    ],
+    "no_reply_domains": [
+        "substack.com",
+        "beehiiv.com",
+        "email.figma.com",
+        "engage.canva.com",
+    ],
+    "trusted_human_domains": [
+        "qc.cuny.edu",
+        "qmail.cuny.edu",
+    ],
+    "subject_patterns": {
+        "auto_notification": [
+            r"\bnotification(s)?\b",
+            r"\bexcel file\b",
+            r"\bapplication summary\b",
+            r"\baccepted\b",
+            r"\bdeclined\b",
+            r"\bcanceled\b",
+            r"\brsvp\b",
+        ]
+    },
+    "body_patterns": {
+        "newsletter": [
+            r"\bunsubscribe\b",
+            r"\bview this post on the web\b",
+            r"\bnewsletter\b",
+        ],
+        "cold_outreach": [
+            r"\breply\s+yes\b",
+            r"\breply\s+send\b",
+            r"\breply\s+stop\b",
+            r"\bremove me\b",
+        ],
+        "suspicious": [
+            r"\bdebt recovery\b",
+            r"\bcollection notice\b",
+        ],
+    },
+}
+
+_EMAIL_RE = re.compile(r"<([^>]+)>")
+
+
+def _extract_email(from_hdr: str) -> str:
+    if not from_hdr:
+        return ""
+    m = _EMAIL_RE.search(from_hdr)
+    if m:
+        return (m.group(1) or "").strip().lower()
+    tokens = re.split(r"\s+", from_hdr.strip())
+    for tok in tokens:
+        t = tok.strip("<>()[]{}\"',;").lower()
+        if "@" in t:
+            return t
+    return ""
+
+
+def _domain_of(email: str) -> str:
+    if "@" not in (email or ""):
+        return ""
+    return email.split("@", 1)[1].lower().strip()
+
+
 def _contains_name_keyword(text: str, keywords_csv: str) -> bool:
-    text = (text or "")
+    haystack = (text or "")
     kws = [k.strip() for k in (keywords_csv or "").split(",") if k.strip()]
     if not kws:
         return True
     for k in kws:
-        if re.search(rf"\b{re.escape(k)}\b", text, flags=re.IGNORECASE):
+        if re.search(rf"\b{re.escape(k)}\b", haystack, flags=re.IGNORECASE):
             return True
     return False
+
+
+def _load_filter_rules(path: str) -> dict:
+    p = Path(path)
+    if not p.exists():
+        return DEFAULT_FILTER_RULES
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as ex:
+        print(f"WARNING: Failed to parse filter rules at {path}: {type(ex).__name__}: {ex}")
+        return DEFAULT_FILTER_RULES
+    if not isinstance(raw, dict):
+        return DEFAULT_FILTER_RULES
+    merged = dict(DEFAULT_FILTER_RULES)
+    merged.update(raw)
+    return merged
+
+
+def _domain_matches(candidate_domain: str, target_domain: str) -> bool:
+    c = (candidate_domain or "").lower().strip()
+    t = (target_domain or "").lower().strip()
+    if not c or not t:
+        return False
+    return c == t or c.endswith("." + t)
+
+
+def _matches_pattern_groups(text: str, pattern_groups: dict) -> str | None:
+    hay = text or ""
+    for group, patterns in (pattern_groups or {}).items():
+        if not isinstance(patterns, list):
+            continue
+        for pat in patterns:
+            try:
+                if re.search(str(pat), hay, flags=re.IGNORECASE):
+                    return str(group)
+            except re.error:
+                continue
+    return None
+
+
+def _skip_reason(from_hdr: str, subject: str, body: str, rules: dict) -> str | None:
+    sender_email = _extract_email(from_hdr)
+    sender_domain = _domain_of(sender_email)
+
+    trusted_domains = [str(x).lower() for x in (rules.get("trusted_human_domains") or [])]
+    if any(_domain_matches(sender_domain, d) for d in trusted_domains):
+        return None
+
+    no_reply_senders = {str(x).lower().strip() for x in (rules.get("no_reply_senders") or [])}
+    if sender_email and sender_email in no_reply_senders:
+        return f"no_reply_sender:{sender_email}"
+
+    # strong sender heuristic
+    compact_from = re.sub(r"[^a-z0-9@]", "", (from_hdr or "").lower())
+    if "noreply" in compact_from or "noreplay" in compact_from:
+        return "noreply_sender"
+
+    no_reply_domains = [str(x).lower().strip() for x in (rules.get("no_reply_domains") or [])]
+    for d in no_reply_domains:
+        if _domain_matches(sender_domain, d):
+            return f"no_reply_domain:{d}"
+
+    g = _matches_pattern_groups(subject or "", rules.get("subject_patterns") or {})
+    if g:
+        return f"subject_pattern:{g}"
+
+    g = _matches_pattern_groups(body or "", rules.get("body_patterns") or {})
+    if g:
+        return f"body_pattern:{g}"
+
+    return None
 
 
 def _dedupe_threads(listed):
@@ -72,6 +217,8 @@ def main() -> None:
     dry_run = bool(args.dry_run)
     dedupe = not bool(args.no_thread_dedupe)
     mark_read = (not args.no_mark_read) and (not dry_run)
+
+    filter_rules = _load_filter_rules(s.filter_rules_path)
 
     gmail = GmailClient(
         credentials_path=credentials_path,
@@ -123,6 +270,12 @@ def main() -> None:
             text_plain, text_html = extract_bodies(payload)
             body_text = text_plain or (html_to_text(text_html) if text_html else "")
             body_text = strip_quoted_replies(body_text).strip()
+
+            reason = _skip_reason(from_hdr=from_hdr, subject=subject, body=body_text, rules=filter_rules)
+            if reason:
+                skipped += 1
+                print(f"SKIP ({reason}): {target_id} | {subject[:80]}")
+                continue
 
             if s.require_name_mention:
                 hay = f"{subject}\n{body_text}"

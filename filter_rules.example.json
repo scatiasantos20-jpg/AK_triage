@@ -1,0 +1,48 @@
+{
+  "no_reply_senders": [
+    "noreply@discord.com",
+    "no-reply@email.slackhq.com",
+    "no-reply@squarespace.com",
+    "notebooklm-noreply@google.com",
+    "drive-shares-dm-noreply@google.com",
+    "employers@g.joinhandshake.com"
+  ],
+  "no_reply_domains": [
+    "substack.com",
+    "beehiiv.com",
+    "email.figma.com",
+    "engage.canva.com"
+  ],
+  "trusted_human_domains": [
+    "qc.cuny.edu",
+    "qmail.cuny.edu"
+  ],
+  "subject_patterns": {
+    "auto_notification": [
+      "\\bnotification(s)?\\b",
+      "\\bexcel file\\b",
+      "\\bapplication summary\\b",
+      "\\baccepted\\b",
+      "\\bdeclined\\b",
+      "\\bcanceled\\b",
+      "\\brsvp\\b"
+    ]
+  },
+  "body_patterns": {
+    "newsletter": [
+      "\\bunsubscribe\\b",
+      "\\bview this post on the web\\b",
+      "\\bnewsletter\\b"
+    ],
+    "cold_outreach": [
+      "\\breply\\s+yes\\b",
+      "\\breply\\s+send\\b",
+      "\\breply\\s+stop\\b",
+      "\\bremove me\\b"
+    ],
+    "suspicious": [
+      "\\bdebt recovery\\b",
+      "\\bcollection notice\\b"
+    ]
+  }
+}

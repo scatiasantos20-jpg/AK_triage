@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # If true, drafts are created only when the latest email contains one of the keywords below.
     require_name_mention: bool = Field(default=True, alias="REQUIRE_NAME_MENTION")
     name_keywords: str = Field(default="Andreia,Andrea", alias="NAME_KEYWORDS")
+    # Structured filtering rules to skip non-human/auto emails before drafting.
+    # JSON format supports sender/domain allow/deny lists and regex patterns.
+    filter_rules_path: str = Field(default="filter_rules.json", alias="FILTER_RULES_PATH")
 
     @field_validator("gemini_timeout_s")
     @classmethod
