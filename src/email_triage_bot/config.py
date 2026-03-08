@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # If true, drafts are created only when the latest email contains one of the keywords below.
     require_name_mention: bool = Field(default=True, alias="REQUIRE_NAME_MENTION")
     name_keywords: str = Field(default="Andreia,Andrea", alias="NAME_KEYWORDS")
+    # Always skip drafting for emails that contain one of these keywords
+    # in sender, subject, or body.
+    ignore_keywords: str = Field(default="social media,bank,newsletter,newsletters,noreply,noreplay,no-reply,ebay,linkedin,instagram,facebook,tiktok,youtube", alias="IGNORE_KEYWORDS")
 
     @field_validator("gemini_timeout_s")
     @classmethod
