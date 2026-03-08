@@ -90,6 +90,10 @@ class GmailClient:
                         f"Missing credentials file: {self.credentials_path}. Put credentials.json in the project root."
                     )
                 flow = InstalledAppFlow.from_client_secrets_file(self.credentials_path, scopes=scopes)
+                # Some Google OAuth responses include previously granted Gmail scopes
+                # (compose/modify) even when requesting readonly; relax strict scope
+                # check so oauthlib does not raise a Warning as an exception.
+                os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
                 creds = flow.run_local_server(
                     port=0,
                     prompt="consent",
