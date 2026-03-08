@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
+from pathlib import Path
 
 from email_triage_bot.config import Settings
 from email_triage_bot.logging_conf import setup_logging
@@ -14,15 +16,152 @@ from email_triage_bot.clients.gemini.client import GeminiClient, GeminiConfig, G
 from email_triage_bot.profiles import get_profile
 
 
+DEFAULT_FILTER_RULES: dict = {
+    "no_reply_senders": [],
+    "newsletter_senders": [],
+    "cold_outreach_senders": [],
+    "suspicious_senders": [],
+    "no_reply_domains": [],
+    "trusted_human_domains": [],
+    "trusted_human_senders": [],
+    "subject_patterns": {},
+    "body_patterns": {},
+    "action_rules": {
+        "priority_order": ["NO_REPLY", "CREATE_DRAFT", "REVIEW_MANUALLY"],
+        "never_create_draft_if": [],
+        "create_draft_if": [],
+        "review_manually_if": [],
+        "default_action": "REVIEW_MANUALLY",
+    },
+}
+
+_EMAIL_RE = re.compile(r"<([^>]+)>")
+
+
+def _extract_email(from_hdr: str) -> str:
+    if not from_hdr:
+        return ""
+    m = _EMAIL_RE.search(from_hdr)
+    if m:
+        return (m.group(1) or "").strip().lower()
+    tokens = re.split(r"\s+", from_hdr.strip())
+    for tok in tokens:
+        t = tok.strip("<>()[]{}\"',;").lower()
+        if "@" in t:
+            return t
+    return ""
+
+
+def _domain_of(email: str) -> str:
+    if "@" not in (email or ""):
+        return ""
+    return email.split("@", 1)[1].lower().strip()
+
+
 def _contains_name_keyword(text: str, keywords_csv: str) -> bool:
-    text = (text or "")
+    haystack = (text or "")
     kws = [k.strip() for k in (keywords_csv or "").split(",") if k.strip()]
     if not kws:
         return True
     for k in kws:
-        if re.search(rf"\b{re.escape(k)}\b", text, flags=re.IGNORECASE):
+        if re.search(rf"\b{re.escape(k)}\b", haystack, flags=re.IGNORECASE):
             return True
     return False
+
+
+def _contains_any_keyword(text: str, keywords_csv: str) -> bool:
+    # Backward-compatible alias: some older local copies still call this name.
+    return _contains_name_keyword(text, keywords_csv)
+
+
+def _load_filter_rules(path: str) -> dict:
+    p = Path(path)
+    if not p.exists():
+        return DEFAULT_FILTER_RULES
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as ex:
+        print(f"WARNING: Failed to parse filter rules at {path}: {type(ex).__name__}: {ex}")
+        return DEFAULT_FILTER_RULES
+    if not isinstance(raw, dict):
+        return DEFAULT_FILTER_RULES
+    merged = dict(DEFAULT_FILTER_RULES)
+    merged.update(raw)
+    return merged
+
+
+def _domain_matches(candidate_domain: str, target_domain: str) -> bool:
+    c = (candidate_domain or "").lower().strip()
+    t = (target_domain or "").lower().strip()
+    if not c or not t:
+        return False
+    return c == t or c.endswith("." + t)
+
+
+def _matches_pattern_groups(text: str, pattern_groups: dict, group_name: str) -> bool:
+    hay = text or ""
+    patterns = (pattern_groups or {}).get(group_name) or []
+    if not isinstance(patterns, list):
+        return False
+    for pat in patterns:
+        try:
+            if re.search(str(pat), hay, flags=re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+def _cond_matches(cond: str, sender_email: str, sender_domain: str, subject: str, body: str, rules: dict) -> bool:
+    cond = (cond or "").strip()
+    if ":" not in cond:
+        return False
+    op, arg = cond.split(":", 1)
+    op = op.strip()
+    arg = arg.strip()
+
+    if op == "sender_in":
+        values = {str(x).lower().strip() for x in (rules.get(arg) or [])}
+        return sender_email in values
+
+    if op == "domain_in":
+        values = [str(x).lower().strip() for x in (rules.get(arg) or [])]
+        return any(_domain_matches(sender_domain, v) for v in values)
+
+    if op == "subject_matches":
+        return _matches_pattern_groups(subject, rules.get("subject_patterns") or {}, arg)
+
+    if op == "body_matches":
+        return _matches_pattern_groups(body, rules.get("body_patterns") or {}, arg)
+
+    return False
+
+
+def _decide_action(from_hdr: str, subject: str, body: str, rules: dict) -> tuple[str, str]:
+    sender_email = _extract_email(from_hdr)
+    sender_domain = _domain_of(sender_email)
+    action_rules = (rules.get("action_rules") or {}) if isinstance(rules.get("action_rules"), dict) else {}
+
+    never = [str(x) for x in (action_rules.get("never_create_draft_if") or [])]
+    create = [str(x) for x in (action_rules.get("create_draft_if") or [])]
+    review = [str(x) for x in (action_rules.get("review_manually_if") or [])]
+    default_action = str(action_rules.get("default_action") or "REVIEW_MANUALLY").upper()
+
+    for cond in never:
+        if _cond_matches(cond, sender_email, sender_domain, subject, body, rules):
+            return "NO_REPLY", cond
+
+    for cond in create:
+        if _cond_matches(cond, sender_email, sender_domain, subject, body, rules):
+            return "CREATE_DRAFT", cond
+
+    for cond in review:
+        if _cond_matches(cond, sender_email, sender_domain, subject, body, rules):
+            return "REVIEW_MANUALLY", cond
+
+    if default_action not in {"NO_REPLY", "CREATE_DRAFT", "REVIEW_MANUALLY"}:
+        default_action = "REVIEW_MANUALLY"
+    return default_action, "default_action"
 
 
 def _dedupe_threads(listed):
@@ -72,6 +211,8 @@ def main() -> None:
     dry_run = bool(args.dry_run)
     dedupe = not bool(args.no_thread_dedupe)
     mark_read = (not args.no_mark_read) and (not dry_run)
+
+    filter_rules = _load_filter_rules(s.filter_rules_path)
 
     gmail = GmailClient(
         credentials_path=credentials_path,
@@ -123,6 +264,12 @@ def main() -> None:
             text_plain, text_html = extract_bodies(payload)
             body_text = text_plain or (html_to_text(text_html) if text_html else "")
             body_text = strip_quoted_replies(body_text).strip()
+
+            action, reason = _decide_action(from_hdr=from_hdr, subject=subject, body=body_text, rules=filter_rules)
+            if action != "CREATE_DRAFT":
+                skipped += 1
+                print(f"SKIP ({action}:{reason}): {target_id} | {subject[:80]}")
+                continue
 
             if s.require_name_mention:
                 hay = f"{subject}\n{body_text}"
