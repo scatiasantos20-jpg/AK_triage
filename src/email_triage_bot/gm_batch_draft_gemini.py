@@ -69,6 +69,11 @@ def _contains_name_keyword(text: str, keywords_csv: str) -> bool:
     return False
 
 
+def _contains_any_keyword(text: str, keywords_csv: str) -> bool:
+    # Backward-compatible alias: some older local copies still call this name.
+    return _contains_name_keyword(text, keywords_csv)
+
+
 def _load_filter_rules(path: str) -> dict:
     p = Path(path)
     if not p.exists():
