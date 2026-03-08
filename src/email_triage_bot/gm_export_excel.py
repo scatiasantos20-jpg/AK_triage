@@ -23,27 +23,30 @@ def _to_iso_utc(ts_ms: int) -> str:
 def _rows_from_messages(gmail: GmailClient, listed: list, include_quoted: bool) -> list[list[str]]:
     rows: list[list[str]] = []
     for item in listed:
-        msg = gmail.get_message_full(item.message_id)
-        payload = msg.get("payload", {}) or {}
-        headers = payload.get("headers", []) or []
+        try:
+            msg = gmail.get_message_full(item.message_id)
+            payload = msg.get("payload", {}) or {}
+            headers = payload.get("headers", []) or []
 
-        subject = get_header(headers, "Subject") or item.subject or ""
-        from_hdr = get_header(headers, "From") or item.from_address or ""
-        text_plain, text_html = extract_bodies(payload)
-        body = text_plain or (html_to_text(text_html) if text_html else "")
-        if not include_quoted:
-            body = strip_quoted_replies(body)
-        body = (body or "").strip()
+            subject = get_header(headers, "Subject") or item.subject or ""
+            from_hdr = get_header(headers, "From") or item.from_address or ""
+            text_plain, text_html = extract_bodies(payload)
+            body = text_plain or (html_to_text(text_html) if text_html else "")
+            if not include_quoted:
+                body = strip_quoted_replies(body)
+            body = (body or "").strip()
 
-        rows.append([
-            item.message_id,
-            item.thread_id,
-            _to_iso_utc(item.internal_ts_ms),
-            from_hdr,
-            subject,
-            body,
-            f"https://mail.google.com/mail/u/0/#inbox/{item.message_id}",
-        ])
+            rows.append([
+                item.message_id,
+                item.thread_id,
+                _to_iso_utc(item.internal_ts_ms),
+                from_hdr,
+                subject,
+                body,
+                f"https://mail.google.com/mail/u/0/#inbox/{item.message_id}",
+            ])
+        except Exception as ex:
+            print(f"WARNING: failed to read message {item.message_id}: {type(ex).__name__}: {ex}")
     return rows
 
 
@@ -78,14 +81,29 @@ def main() -> None:
     query = args.query.strip() if args.query else (profile.gmail_query if profile and profile.gmail_query else settings.gmail_query)
     limit = int(args.limit if args.limit is not None else (profile.batch_limit if profile and profile.batch_limit else settings.batch_limit))
 
-    gmail = GmailClient(
-        credentials_path=credentials_path,
-        token_path=token_path,
-        include_compose_scope=False,
-        include_modify_scope=False,
-    )
+    try:
+        gmail = GmailClient(
+            credentials_path=credentials_path,
+            token_path=token_path,
+            include_compose_scope=False,
+            include_modify_scope=False,
+        )
+    except FileNotFoundError as ex:
+        raise SystemExit(
+            "Missing Gmail credentials for export. "
+            f"Expected file: {credentials_path}. "
+            "Set GMAIL_CREDENTIALS_PATH / PROFILES_PATH correctly or place credentials.json in the project root."
+        ) from ex
+    except PermissionError as ex:
+        raise SystemExit(
+            "Gmail token does not have required read access for export. "
+            "Re-authenticate the profile (for example with gm_list) and try again."
+        ) from ex
 
-    listed = gmail.list_messages(query=query, limit=limit)
+    try:
+        listed = gmail.list_messages(query=query, limit=limit)
+    except Exception as ex:
+        raise SystemExit(f"Failed to list Gmail messages for export: {type(ex).__name__}: {ex}") from ex
 
     rows = _rows_from_messages(gmail, listed, include_quoted=args.include_quoted)
 
