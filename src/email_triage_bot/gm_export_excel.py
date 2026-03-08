@@ -21,17 +21,53 @@ def _to_iso_utc(ts_ms: int) -> str:
     return dt.isoformat()
 
 
+def _candidate_credential_paths() -> list[Path]:
+    base_dirs = [Path.cwd(), Path.cwd() / "secret", Path.cwd() / "secrets"]
+    patterns = ["credentials.json", "credentials*.json", "client_secret*.json"]
+
+    out: list[Path] = []
+    seen: set[str] = set()
+    for base in base_dirs:
+        if not base.exists():
+            continue
+        for pattern in patterns:
+            for path in sorted(base.glob(pattern)):
+                key = str(path.resolve())
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(path)
+    return out
+
+
 def _resolve_credentials_path(path_value: str) -> str:
     path = Path(path_value)
     if path.exists():
         return str(path)
 
-    # Friendly fallback: many Gmail OAuth downloads are named client_secret*.json
-    candidates = sorted(Path.cwd().glob("client_secret*.json"))
+    candidates = _candidate_credential_paths()
     if len(candidates) == 1:
         picked = candidates[0]
-        print(f"INFO: credentials.json not found. Using detected credentials file: {picked}")
+        print(f"INFO: configured credentials path not found. Using: {picked}")
         return str(picked)
+
+    return str(path)
+
+
+def _resolve_token_path(token_value: str) -> str:
+    path = Path(token_value)
+    if path.exists():
+        return str(path)
+
+    candidates = [
+        Path("token.json"),
+        Path("secret") / "token.json",
+        Path("secrets") / "token.json",
+    ]
+    for cand in candidates:
+        if cand.exists():
+            print(f"INFO: configured token path not found. Using: {cand}")
+            return str(cand)
 
     return str(path)
 
@@ -97,6 +133,7 @@ def main() -> None:
     credentials_path = args.credentials_path or (profile.credentials_path if profile else settings.gmail_credentials_path)
     token_path = args.token_path or (profile.token_path if profile else settings.gmail_token_path)
     credentials_path = _resolve_credentials_path(credentials_path)
+    token_path = _resolve_token_path(token_path)
     query = args.query.strip() if args.query else (profile.gmail_query if profile and profile.gmail_query else settings.gmail_query)
     limit = int(args.limit if args.limit is not None else (profile.batch_limit if profile and profile.batch_limit else settings.batch_limit))
 
@@ -109,15 +146,18 @@ def main() -> None:
         )
     except FileNotFoundError as ex:
         token_exists = os.path.exists(token_path)
+        candidates = _candidate_credential_paths()
+        candidates_text = "\n".join(f"   - {c}" for c in candidates[:12]) or "   - (none found)"
         raise SystemExit(
             "Missing Gmail credentials for export.\n"
             f"- Expected credentials file: {credentials_path}\n"
-            f"- Token file exists: {token_exists} ({token_path})\n\n"
+            f"- Token file exists: {token_exists} ({token_path})\n"
+            "- Detected candidate credential files:\n"
+            f"{candidates_text}\n\n"
             "How to fix:\n"
-            "1) Download OAuth credentials JSON from Google Cloud (Desktop app).\n"
-            "2) Save it as credentials.json in the project root OR pass --credentials-path.\n"
-            "3) Optionally set --token-path (or GMAIL_TOKEN_PATH) for your token file.\n"
-            "4) Run again: python -m email_triage_bot.gm_export_excel --credentials-path <file>.json"
+            "1) If your file is in secrets/, run with --credentials-path secrets/<file>.json.\n"
+            "2) Optionally set --token-path secrets/token.json.\n"
+            "3) Or set env vars GMAIL_CREDENTIALS_PATH and GMAIL_TOKEN_PATH."
         ) from ex
     except PermissionError as ex:
         raise SystemExit(
