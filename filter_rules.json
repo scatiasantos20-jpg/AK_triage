@@ -80,16 +80,6 @@
       "\\bmessage from your score mentor\\b",
       "\\breschedul(?:e|ing|ed)\\b",
       "\\bneed to cancel\\b"
-    ],
-    "review_manually_subject": [
-      "\\bsmall business expo\\b",
-      "\\bupcoming nyc webinars\\b",
-      "\\blooking for mentor\\b",
-      "\\breal estate expertise\\b",
-      "\\binternational women'?s day\\b",
-      "\\badding neil to weekly meeting\\b",
-      "\\bmanifest law about your o1\\b",
-      "\\bweb inquiry\\b"
     ]
   },
   "body_patterns": {
