@@ -30,6 +30,11 @@ def main() -> None:
     else:
         names = list(profiles.keys())
 
+    missing = [name for name in names if name not in profiles]
+    if missing:
+        missing_csv = ", ".join(missing)
+        raise SystemExit(f"Unknown profile(s): {missing_csv}. Check PROFILES_PATH={s.profiles_path}")
+
     exe = sys.executable
 
     any_fail = False

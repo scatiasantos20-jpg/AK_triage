@@ -19,9 +19,19 @@ def load_profiles(path: str) -> dict[str, MailProfile]:
     p = Path(path)
     if not p.exists():
         return {}
-    raw = json.loads(p.read_text(encoding="utf-8"))
+
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid profiles JSON in {path}: {exc}") from exc
+
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Invalid profiles format in {path}: expected top-level object/dict.")
+
     out: dict[str, MailProfile] = {}
-    for name, cfg in (raw or {}).items():
+    for name, cfg in raw.items():
         if not isinstance(cfg, dict):
             continue
         out[str(name)] = MailProfile(
@@ -37,3 +47,10 @@ def load_profiles(path: str) -> dict[str, MailProfile]:
 
 def get_profile(path: str, name: str) -> MailProfile | None:
     return load_profiles(path).get(name)
+
+
+def get_profile_or_raise(path: str, name: str) -> MailProfile:
+    profile = get_profile(path, name)
+    if profile is None:
+        raise SystemExit(f"Profile '{name}' not found in {path}.")
+    return profile

@@ -13,7 +13,7 @@ from email_triage_bot.core.normalization import html_to_text, strip_quoted_repli
 from email_triage_bot.core.thread_context import parse_thread, build_thread_context
 from email_triage_bot.core.prompt_builder import DEFAULT_MASTER_PROMPT, PromptParts, build_prompt
 from email_triage_bot.clients.gemini.client import GeminiClient, GeminiConfig, GeminiRateLimitExceeded
-from email_triage_bot.profiles import get_profile
+from email_triage_bot.profiles import get_profile_or_raise
 
 
 DEFAULT_FILTER_RULES: dict = {
@@ -200,14 +200,14 @@ def main() -> None:
         raise SystemExit("Missing GEMINI_API_KEY in .env")
 
     profile_name = args.profile.strip() or s.default_profile
-    prof = get_profile(s.profiles_path, profile_name)
+    prof = get_profile_or_raise(s.profiles_path, profile_name)
 
-    credentials_path = prof.credentials_path if prof else s.gmail_credentials_path
-    token_path = prof.token_path if prof else s.gmail_token_path
-    signature = prof.draft_signature if prof and prof.draft_signature is not None else s.draft_signature
+    credentials_path = prof.credentials_path
+    token_path = prof.token_path
+    signature = prof.draft_signature if prof.draft_signature is not None else s.draft_signature
 
-    query = (args.query.strip() if args.query else (prof.gmail_query if prof and prof.gmail_query else s.gmail_query))
-    limit = int(args.limit if args.limit is not None else (prof.batch_limit if prof and prof.batch_limit else s.batch_limit))
+    query = (args.query.strip() if args.query else (prof.gmail_query if prof.gmail_query else s.gmail_query))
+    limit = int(args.limit if args.limit is not None else (prof.batch_limit if prof.batch_limit else s.batch_limit))
     dry_run = bool(args.dry_run)
     dedupe = not bool(args.no_thread_dedupe)
     mark_read = (not args.no_mark_read) and (not dry_run)
