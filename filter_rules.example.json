@@ -1,0 +1,179 @@
+{
+  "no_reply_senders": [
+    "dhara.rocha@vascarsolutions.com",
+    "employers@g.joinhandshake.com",
+    "no-reply@email.slackhq.com",
+    "noreply@discord.com",
+    "no-reply@squarespace.com",
+    "notebooklm-noreply@google.com",
+    "drive-shares-dm-noreply@google.com",
+    "hello@ubiq.world"
+  ],
+  "newsletter_senders": [
+    "lenny@substack.com",
+    "theaireport@mail.beehiiv.com",
+    "david-meltzer@mail.beehiiv.com",
+    "passport-to-paradise@mail.beehiiv.com",
+    "handshake@mail.joinhandshake.com",
+    "canvacreate@engage.canva.com",
+    "editor@thewomenweadmire.com"
+  ],
+  "cold_outreach_senders": [
+    "gray@techqbatch.site",
+    "reagan@codingcops.site",
+    "ashton.clarke@scalepodcastscaling.co",
+    "marc@handle.horse"
+  ],
+  "suspicious_senders": [
+    "drive-shares-dm-noreply@google.com"
+  ],
+  "no_reply_domains": [
+    "substack.com",
+    "beehiiv.com",
+    "email.figma.com",
+    "engage.canva.com"
+  ],
+  "trusted_human_domains": [
+    "qc.cuny.edu",
+    "qmail.cuny.edu"
+  ],
+  "trusted_human_senders": [
+    "carlos.garzonacevedo@qc.cuny.edu",
+    "jennifer.ackermannniola55@qmail.cuny.edu"
+  ],
+  "subject_patterns": {
+    "auto_notification": [
+      "\\bnotification(s)?\\b",
+      "\\bexcel file\\b",
+      "\\bapplication summary\\b",
+      "\\bmentioned you\\b",
+      "\\bcommented on\\b",
+      "\\baccepted\\b",
+      "\\bdeclined\\b",
+      "\\bcanceled\\b",
+      "\\bcancelled\\b",
+      "\\bsubscription canceled\\b",
+      "\\bperformance report\\b"
+    ],
+    "newsletter": [
+      "\\bnewsletter\\b",
+      "\\bweekly digest\\b",
+      "\\btop stories\\b",
+      "\\bview in browser\\b"
+    ],
+    "calendar_rsvp_no_reply": [
+      "\\baccepted:\\b",
+      "\\bdeclined:\\b",
+      "\\bcanceled:\\b",
+      "\\bcancelled:\\b"
+    ],
+    "create_draft_subject": [
+      "\\bgi bill certification\\b",
+      "\\byour rsvp is needed\\b",
+      "\\bcambio de horario\\b",
+      "^meeting$",
+      "\\bhook up a .* mentee .* mentor\\b",
+      "\\bcra grant request 2026\\b",
+      "\\bmeredith\\b",
+      "\\bprompt for session notes\\b",
+      "\\binternship follow up\\b",
+      "\\bmessage from your score mentor\\b",
+      "\\breschedul(?:e|ing|ed)\\b",
+      "\\bneed to cancel\\b"
+    ],
+    "review_manually_subject": [
+      "\\bsmall business expo\\b",
+      "\\bupcoming nyc webinars\\b",
+      "\\blooking for mentor\\b",
+      "\\breal estate expertise\\b",
+      "\\binternational women'?s day\\b",
+      "\\badding neil to weekly meeting\\b",
+      "\\bmanifest law about your o1\\b",
+      "\\bweb inquiry\\b"
+    ]
+  },
+  "body_patterns": {
+    "newsletter": [
+      "\\bunsubscribe\\b",
+      "\\bview this post on the web\\b",
+      "\\bmanage preferences\\b",
+      "\\bemail preferences\\b",
+      "\\bupdate your preferences\\b"
+    ],
+    "cold_outreach": [
+      "\\breply\\s+yes\\b",
+      "\\breply\\s+send\\b",
+      "\\breply\\s+stop\\b",
+      "\\bremove me\\b",
+      "\\bquick question\\b",
+      "\\bare you the right person\\b",
+      "\\bbook a call\\b",
+      "\\bschedule a demo\\b",
+      "\\bcan we help\\b",
+      "\\bfollowing up on my previous email\\b"
+    ],
+    "suspicious": [
+      "\\bdebt recovery\\b",
+      "\\bcollection notice\\b",
+      "\\burgent action required\\b",
+      "\\bverify your account\\b"
+    ],
+    "create_draft_body": [
+      "\\bcan you\\b",
+      "\\bcould you\\b",
+      "\\bplease respond\\b",
+      "\\bplease reply\\b",
+      "\\blet me know\\b",
+      "\\bwhen are you available\\b",
+      "\\bwhat time works for you\\b",
+      "\\bcan we reschedule\\b",
+      "\\bneed to cancel\\b",
+      "\\bgi bill\\b",
+      "\\bgrant request\\b",
+      "\\bsession notes\\b",
+      "\\binternship follow up\\b",
+      "\\bdid you mentor\\b",
+      "\\bdid you work with\\b"
+    ],
+    "review_manually_body": [
+      "\\blooping you in\\b",
+      "\\bfyi only\\b",
+      "\\bfor awareness\\b",
+      "\\bforwarding this\\b",
+      "\\badding you here\\b",
+      "\\bplease complete the quiz\\b",
+      "\\bbook a consultation\\b"
+    ]
+  },
+  "action_rules": {
+    "priority_order": [
+      "NO_REPLY",
+      "CREATE_DRAFT",
+      "REVIEW_MANUALLY"
+    ],
+    "never_create_draft_if": [
+      "sender_in:no_reply_senders",
+      "sender_in:newsletter_senders",
+      "sender_in:cold_outreach_senders",
+      "sender_in:suspicious_senders",
+      "domain_in:no_reply_domains",
+      "subject_matches:auto_notification",
+      "subject_matches:calendar_rsvp_no_reply",
+      "subject_matches:newsletter",
+      "body_matches:newsletter",
+      "body_matches:cold_outreach",
+      "body_matches:suspicious"
+    ],
+    "create_draft_if": [
+      "sender_in:trusted_human_senders",
+      "domain_in:trusted_human_domains",
+      "subject_matches:create_draft_subject",
+      "body_matches:create_draft_body"
+    ],
+    "review_manually_if": [
+      "subject_matches:review_manually_subject",
+      "body_matches:review_manually_body"
+    ],
+    "default_action": "REVIEW_MANUALLY"
+  }
+}
