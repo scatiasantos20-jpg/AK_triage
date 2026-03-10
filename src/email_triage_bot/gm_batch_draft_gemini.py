@@ -137,7 +137,7 @@ def _cond_matches(cond: str, sender_email: str, sender_domain: str, subject: str
     return False
 
 
-def _decide_action(from_hdr: str, subject: str, body: str, rules: dict) -> tuple[str, str]:
+def _decide_action(from_hdr: str, subject: str, body: str, thread_context: str, rules: dict) -> tuple[str, str]:
     sender_email = _extract_email(from_hdr)
     sender_domain = _domain_of(sender_email)
     action_rules = (rules.get("action_rules") or {}) if isinstance(rules.get("action_rules"), dict) else {}
@@ -147,16 +147,22 @@ def _decide_action(from_hdr: str, subject: str, body: str, rules: dict) -> tuple
     review = [str(x) for x in (action_rules.get("review_manually_if") or [])]
     default_action = str(action_rules.get("default_action") or "REVIEW_MANUALLY").upper()
 
+    body_with_history = (body or "")
+    if (thread_context or "").strip():
+        body_with_history = body_with_history + "\n\nTHREAD CONTEXT:\n" + thread_context
+
+    # Safety first: "never create draft" should evaluate only latest inbound email.
     for cond in never:
         if _cond_matches(cond, sender_email, sender_domain, subject, body, rules):
             return "NO_REPLY", cond
 
+    # For create/review rules, consider latest email + thread history.
     for cond in create:
-        if _cond_matches(cond, sender_email, sender_domain, subject, body, rules):
+        if _cond_matches(cond, sender_email, sender_domain, subject, body_with_history, rules):
             return "CREATE_DRAFT", cond
 
     for cond in review:
-        if _cond_matches(cond, sender_email, sender_domain, subject, body, rules):
+        if _cond_matches(cond, sender_email, sender_domain, subject, body_with_history, rules):
             return "REVIEW_MANUALLY", cond
 
     if default_action not in {"NO_REPLY", "CREATE_DRAFT", "REVIEW_MANUALLY"}:
@@ -265,7 +271,30 @@ def main() -> None:
             body_text = text_plain or (html_to_text(text_html) if text_html else "")
             body_text = strip_quoted_replies(body_text).strip()
 
-            action, reason = _decide_action(from_hdr=from_hdr, subject=subject, body=body_text, rules=filter_rules)
+            thread_context = ""
+            has_prior_sent = False
+            try:
+                thread = gmail.get_thread_full(thread_id)
+                items = parse_thread(thread)
+                thread_context = build_thread_context(items, max_items=6, max_chars=2200)
+                has_prior_sent = any(it.is_sent for it in items)
+            except Exception:
+                thread_context = ""
+                has_prior_sent = False
+
+            action, reason = _decide_action(
+                from_hdr=from_hdr,
+                subject=subject,
+                body=body_text,
+                thread_context=thread_context,
+                rules=filter_rules,
+            )
+
+            # If there's ongoing conversation history with outbound messages,
+            # prefer drafting a reply instead of manual review.
+            if action == "REVIEW_MANUALLY" and has_prior_sent:
+                action, reason = "CREATE_DRAFT", "thread_has_prior_sent"
+
             if action != "CREATE_DRAFT":
                 skipped += 1
                 print(f"SKIP ({action}:{reason}): {target_id} | {subject[:80]}")
@@ -273,18 +302,10 @@ def main() -> None:
 
             if s.require_name_mention:
                 hay = f"{subject}\n{body_text}"
-                if not _contains_any_keyword(hay, s.name_keywords):
+                if not _contains_name_keyword(hay, s.name_keywords):
                     skipped += 1
                     print(f"SKIP (no name mention): {target_id} | {subject[:80]}")
                     continue
-
-            thread_context = ""
-            try:
-                thread = gmail.get_thread_full(thread_id)
-                items = parse_thread(thread)
-                thread_context = build_thread_context(items, max_items=6, max_chars=2200)
-            except Exception:
-                thread_context = ""
 
             latest_block = f"From: {from_hdr}\nSubject: {subject}\n\n{body_text}"
             prompt = build_prompt(PromptParts(
