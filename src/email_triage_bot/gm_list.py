@@ -5,7 +5,7 @@ import argparse
 from email_triage_bot.clients.gmail.client import GmailClient
 from email_triage_bot.config import Settings
 from email_triage_bot.logging_conf import setup_logging
-from email_triage_bot.profiles import get_profile
+from email_triage_bot.profiles import get_profile_or_raise
 
 
 def main() -> None:
@@ -24,12 +24,12 @@ def main() -> None:
     setup_logging(settings.log_level)
 
     profile_name = args.profile.strip() or settings.default_profile
-    profile = get_profile(settings.profiles_path, profile_name)
+    profile = get_profile_or_raise(settings.profiles_path, profile_name)
 
-    credentials_path = profile.credentials_path if profile else settings.gmail_credentials_path
-    token_path = profile.token_path if profile else settings.gmail_token_path
-    query = args.query.strip() if args.query else (profile.gmail_query if profile and profile.gmail_query else settings.gmail_query)
-    limit = int(args.limit if args.limit is not None else (profile.batch_limit if profile and profile.batch_limit else settings.batch_limit))
+    credentials_path = profile.credentials_path
+    token_path = profile.token_path
+    query = args.query.strip() if args.query else (profile.gmail_query if profile.gmail_query else settings.gmail_query)
+    limit = int(args.limit if args.limit is not None else (profile.batch_limit if profile.batch_limit else settings.batch_limit))
 
     # Least privilege by default: listing only needs read scope.
     gmail = GmailClient(
